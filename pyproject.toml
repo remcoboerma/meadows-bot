@@ -13,6 +13,7 @@ authors = [{ name = "MEADOWS" }]
 dependencies = [
     "meadows-protocol",
     "meadows-client",
+    "aiohttp>=3.9.0",
 ]
 
 [project.optional-dependencies]
