@@ -1,6 +1,6 @@
 # meadows-bot
 
-> MEADOWS bot SDK: `BaseBot`, `LLMBot`. Bot-author-facing package with a fast quick-start.
+> MEADOWS bot SDK: `BaseBot`, `LLMBot`, and ready-to-use bots. Bot-author-facing package with a fast quick-start.
 > Depends on `meadows-client` (transport) and `meadows-protocol` (shapes). Never imports from `meadows-server`.
 
 ## What this package contains
@@ -8,10 +8,20 @@
 - `base.py` — `BaseBot`: the SDK core. Auth, reconnect, registration, routing are hidden.
 - `llm.py` — `LLMBot`: minimal abstract LLM bot (no provider specifics in the PoC).
 - `examples/echo_bot.py` — the canonical example bot.
+- Ready-to-use bots (lazy-loaded via `from meadows.bot import HelpBot`, etc.):
+  - `help_bot.py` — static help text (`help`, `bots`, `commands`, `groups`, `guide`)
+  - `stats_bot.py` — passive monitoring dashboard (`@stats`, `@stats reset`)
+  - `chat_bot.py` — LLM conversational assistant via Ollama
+  - `fetch_bot.py` — fetches URLs and converts to Markdown
+  - `export_bot.py` — exports a thread to a Markdown file
+  - `rag_bot.py` — video/audio fragment search via RAG API
+  - `slo_bot.py` — Dutch SLO curriculum learning outcome search
 
 ## Quick start
 
 A working bot is `BOT_NAME` + `should_handle` + `handle` + `connect()`. That's the whole contract.
+
+Set the `MEADOWS_JWT_TOKEN` env var (generate with `cd meadows-server && inv bot-jwt --name=mybot --expiry=1y`), then:
 
 ```python
 from meadows.bot import BaseBot
@@ -36,7 +46,11 @@ if __name__ == "__main__":
 ## Install
 
 ```bash
+# Minimal (BaseBot + LLMBot)
 uv pip install -e .
+
+# With extra bots that need HTTP dependencies
+uv pip install -e ".[examples,dependency-heavy,llm]"
 ```
 
 ## Test
@@ -44,6 +58,20 @@ uv pip install -e .
 ```bash
 uv run pytest -q
 ```
+
+## Included bots
+
+| Bot | Commands | Deps | Description |
+|-----|----------|------|-------------|
+| `HelpBot` | `help`, `bots`, `commands`, `groups`, `guide` | none | Static help text |
+| `StatsBot` | `@stats`, `@stats reset`, `@stats groups`, `@stats top`, `@stats help` | none | Passive monitoring dashboard; observes all traffic |
+| `ChatBot` | `chat`, `ask`, `vraag`, `praat` | `[llm]` | LLM assistant via Ollama (requires `OLLAMA_URL`) |
+| `FetchBot` | `fetch`, `haal` | `[dependency-heavy]` | Fetches URLs → Markdown |
+| `ExportBot` | `export`, `exporteer` | none | Exports a thread to a Markdown file |
+| `RagBot` | `rag`, `zoek` | none | Video/audio fragment search via RAG API |
+| `SLOBot` | `slo`, `leerdoel` | none | Dutch SLO curriculum learning outcome search |
+
+All bots are lazy-loaded: `from meadows.bot import HelpBot`.
 
 ## The protocol boundary
 
