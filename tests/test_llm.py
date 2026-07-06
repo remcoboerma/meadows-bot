@@ -36,7 +36,7 @@ class _StubLLMBot(LLMBot):
 
 
 class TestLLMBotAbstract:
-    def test_llmbot_is_abstract_without_query_llm(self, jwt_secret_file):
+    def test_llmbot_is_abstract_without_query_llm(self, bot_token):
         """BUSINESS RULE (MEADOWS §5 line 130): LLMBot is abstract —
         you can't run an LLM bot without writing query_llm.
         """
@@ -45,7 +45,7 @@ class TestLLMBotAbstract:
             pass
 
         with pytest.raises(TypeError):
-            _Incomplete(jwt_secret_path=str(jwt_secret_file))  # type: ignore[abstract]
+            _Incomplete(token=bot_token)  # type: ignore[abstract]
 
     def test_llmbot_is_abstract_via_base(self):
         """BUSINESS RULE: LLMBot inherits BaseBot's abstractness, so it

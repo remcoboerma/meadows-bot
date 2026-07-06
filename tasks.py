@@ -33,9 +33,9 @@ def setup(c: Context) -> None:
         comment="URL of the meadows-server hub this bot connects to",
     )
     _check_env(
-        "MEADOWS_JWT_SECRET",
-        default="./shared_keys/jwt.key",
-        comment="Path to the JWT secret shared with meadows-server",
+        "MEADOWS_JWT_TOKEN",
+        default="",
+        comment="Pre-signed JWT token for this bot (generate with `inv bot-jwt` on the server)",
     )
     _check_env(
         "BOT_AUTH_ERROR_DISCONNECT_DELAY",

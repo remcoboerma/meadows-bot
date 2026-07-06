@@ -12,10 +12,8 @@ services:
     restart: unless-stopped
     environment:
       - MEADOWS_SERVER_URL=${MEADOWS_SERVER_URL:-http://localhost:8080}
-      - MEADOWS_JWT_SECRET=${MEADOWS_JWT_SECRET:-/shared_keys/jwt.key}
+      - MEADOWS_JWT_TOKEN=${MEADOWS_JWT_TOKEN}
       - BOT_AUTH_ERROR_DISCONNECT_DELAY=${BOT_AUTH_ERROR_DISCONNECT_DELAY:-5}
-    volumes:
-      - ./shared_keys:/shared_keys:ro
     networks:
       - meadows
     logging:

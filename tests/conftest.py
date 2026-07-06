@@ -4,18 +4,21 @@ BUSINESS RULE (MEADOWS §5 line 130): the SDK hides transport. Tests
 prove the routing/registration logic works without a real server by
 injecting a FakeMeadowClient that records emits and lets us trigger
 handlers manually — same pattern meadows-client uses (FakeAsyncClient).
+
+BUSINESS RULE (auth): only the server knows the production signing key.
+Tests use a throwaway secret to mint test JWTs — the bot never reads
+the real signing key.
 """
 
 from __future__ import annotations
 
-import pathlib
-import secrets
 from typing import Any
 
+import jwt as pyjwt
 import pytest
 
 from meadows.bot import BaseBot
-from meadows.protocol import EventName
+from meadows.protocol import EventName, JWTRole, build_claims, jwt as protocol_jwt
 
 
 class FakeMeadowClient:
@@ -75,9 +78,15 @@ class FakeMeadowClient:
         return [data for evt, data in self.emits if evt == name]
 
 
+# Test-only signing secret — never used in production.
+# The bot tests only need a valid JWT to verify the token flows through
+# correctly; the real server validates signatures with its own secret.
+_TEST_SECRET = b"test-secret-used-only-in-bot-tests-32bytes!"
+
+
 def _make_bot(
     bot_cls: type[BaseBot],
-    jwt_secret_file: pathlib.Path,
+    bot_token: str,
     **bot_kwargs: Any,
 ) -> tuple[BaseBot, FakeMeadowClient]:
     """Construct a bot with a FakeMeadowClient swapped in.
@@ -87,7 +96,7 @@ def _make_bot(
     self.client with a fake. This is the seam that makes the bot
     testable without a server.
     """
-    bot = bot_cls(jwt_secret_path=str(jwt_secret_file), **bot_kwargs)
+    bot = bot_cls(token=bot_token, **bot_kwargs)
     fake = FakeMeadowClient()
     # Re-wire handlers against the fake (the real __init__ wired them
     # against the real MeadowClient; we replay _setup_handlers).
@@ -97,21 +106,24 @@ def _make_bot(
 
 
 @pytest.fixture()
-def jwt_secret_file(tmp_path: pathlib.Path) -> pathlib.Path:
-    """Write a throwaway JWT secret so BaseBot.__init__ can read it.
+def bot_token() -> str:
+    """Return a pre-signed test JWT for a bot named "recorder".
 
-    BUSINESS RULE (MEADOWS §5 line 132): BaseBot reads the secret from
-    a path. Tests shouldn't depend on /shared_keys existing.
+    BUSINESS RULE (auth): only the server knows the production signing
+    key. This fixture uses a test-only secret to mint a JWT the bot
+    can hold. The server-side tests use their own test secret — the
+    two suites are independent.
     """
-    key = tmp_path / "jwt.key"
-    # BUSINESS RULE: the secret just needs to be bytes. A random 48-byte
-    # key is plenty for tests (and avoids reusing a real secret).
-    key.write_bytes(secrets.token_bytes(48))
-    return key
+    claims = build_claims(name="recorder", role=JWTRole.BOT)
+    return pyjwt.encode(
+        claims.model_dump(exclude_none=True),
+        _TEST_SECRET,
+        algorithm=protocol_jwt.ALGORITHM,
+    )
 
 
 @pytest.fixture()
-def make_bot(jwt_secret_file: pathlib.Path):
+def make_bot(bot_token: str):
     """Fixture returning a factory that builds a bot with a fake client.
 
     Usage: bot, fake = make_bot(MyBot)
@@ -121,6 +133,6 @@ def make_bot(jwt_secret_file: pathlib.Path):
         bot_cls: type[BaseBot],
         **bot_kwargs: Any,
     ) -> tuple[BaseBot, FakeMeadowClient]:
-        return _make_bot(bot_cls, jwt_secret_file, **bot_kwargs)
+        return _make_bot(bot_cls, bot_token, **bot_kwargs)
 
     return _factory

@@ -84,13 +84,12 @@ class TestBaseBotConstruction:
         # internally — the author never touches socketio.
         assert bot.client is not None
 
-    def test_construction_reads_jwt_secret_from_path(self, make_bot, jwt_secret_file):
-        """BUSINESS RULE (MEADOWS §5 line 132): the secret is read from
-        a path so deployment can mount a shared volume without code
-        changes.
+    def test_construction_accepts_token(self, make_bot, bot_token):
+        """BUSINESS RULE (auth): the bot receives a pre-signed JWT,
+        not the signing key. Only the server can mint tokens.
         """
         bot, _ = make_bot(_RecorderBot)
-        assert bot.jwt_secret == jwt_secret_file.read_bytes()
+        assert bot.token == bot_token
 
     def test_construction_initializes_empty_state(self, make_bot):
         """BUSINESS RULE (MEADOWS §5 line 130): the author doesn't
