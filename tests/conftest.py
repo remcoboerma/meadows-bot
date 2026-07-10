@@ -12,13 +12,16 @@ the real signing key.
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from typing import Any
 
 import jwt as pyjwt
 import pytest
 
 from meadows.bot import BaseBot
-from meadows.protocol import EventName, JWTRole, build_claims, jwt as protocol_jwt
+from meadows.protocol import EventName, JWTRole, MessageType, build_claims, jwt as protocol_jwt
+from meadows.protocol.envelope import generate_message_id
 
 
 class FakeMeadowClient:
@@ -39,6 +42,8 @@ class FakeMeadowClient:
         self.wait_called = False
         self._connect_handlers: list[Any] = []
         self._disconnect_handlers: list[Any] = []
+        self._pending_rpc_futures: dict[str, asyncio.Future[str]] = {}
+        self.claims = None  # set by _make_bot
 
     def on(self, event: EventName | str, handler: Any) -> None:
         name = event.value if isinstance(event, EventName) else str(event)
@@ -77,6 +82,48 @@ class FakeMeadowClient:
         name = event.value if isinstance(event, EventName) else str(event)
         return [data for evt, data in self.emits if evt == name]
 
+    async def call_rpc(
+        self,
+        service_label: str,
+        content: str,
+        *,
+        origin: str | None = None,
+        semver: str = "1.0.0",
+        timeout: float = 30.0,
+        group_id: str = "general",
+    ) -> str:
+        """Fake call_rpc — emits RPC_REQUEST and awaits a triggered response."""
+        origin = origin or (self.claims.bot_name if self.claims else "test") or "test"
+        request_id = uuid.uuid4().hex[:12]
+        meta = {"request_id": request_id}
+        msg = {
+            "id": generate_message_id(),
+            "type": MessageType.RPC_REQUEST.value,
+            "user_id": self.claims.sub if self.claims else "test",
+            "bot_name": self.claims.bot_name if self.claims else None,
+            "group_id": group_id,
+            "content": content,
+            "labels": [[origin, service_label, semver, meta]],
+        }
+        name = EventName.MESSAGE.value
+        self.emits.append((name, msg))
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+        self._pending_rpc_futures[request_id] = future
+
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except asyncio.TimeoutError:
+            self._pending_rpc_futures.pop(request_id, None)
+            raise
+
+    def resolve_rpc(self, request_id: str, content: str) -> None:
+        """Test helper: resolve a pending RPC future."""
+        fut = self._pending_rpc_futures.pop(request_id, None)
+        if fut and not fut.done():
+            fut.set_result(content)
+
 
 # Test-only signing secret — never used in production.
 # The bot tests only need a valid JWT to verify the token flows through
@@ -100,6 +147,7 @@ def _make_bot(
     fake = FakeMeadowClient()
     # Re-wire handlers against the fake (the real __init__ wired them
     # against the real MeadowClient; we replay _setup_handlers).
+    fake.claims = bot.claims
     bot.client = fake
     bot._setup_handlers()  # type: ignore[attr-defined]
     return bot, fake

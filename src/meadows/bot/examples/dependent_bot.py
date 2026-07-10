@@ -43,9 +43,11 @@ class DependentBot(BaseBot):
             return
         content = data.get("content", "")
         self.log(f"Received: {content[:50]} — calling math service...")
-        asyncio.create_task(self._do_math(content))
+        task = asyncio.create_task(self._do_math())
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
 
-    async def _do_math(self, content: str) -> None:
+    async def _do_math(self) -> None:
         """Call the math service and log the result."""
         self.call_count += 1
         try:

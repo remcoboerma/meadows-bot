@@ -1,8 +1,8 @@
-"""Tests for BaseBot.call_rpc — the async RPC author surface.
+"""Tests for call_rpc — the async RPC author surface.
 
-BUSINESS RULE (§2.10): call_rpc lets bot authors await a remote
-service response as if it were a local call.  These tests pin
-that contract without a real server.
+BUSINESS RULE (§2.10): call_rpc lives on MeadowClient and is
+delegated to from BaseBot.  These tests pin the contract using
+FakeMeadowClient without a real server.
 """
 
 from __future__ import annotations
@@ -42,38 +42,26 @@ class _CallerBot(BaseBot):
 
 @pytest.mark.asyncio
 async def test_call_rpc_resolves_on_response(make_bot):
-    """call_rpc should return the response content when an RPC_RESPONSE arrives."""
+    """call_rpc should return the response content when the future is resolved."""
     bot, fake = make_bot(_CallerBot)
     bot.authenticated = True
 
-    # Start call_rpc in the background
     async def do_call():
         return await bot.call_rpc("service:echo", "hello", timeout=5.0)
 
     task = asyncio.create_task(do_call())
-    await asyncio.sleep(0.05)  # let the task start
+    await asyncio.sleep(0.05)
 
-    # Simulate the RPC_RESPONSE arriving
     # Find the request_id from the emitted RPC_REQUEST
     emits = fake.emits_for(EventName.MESSAGE)
     assert len(emits) == 1
     request_msg = emits[0]
     assert request_msg["type"] == MessageType.RPC_REQUEST.value
 
-    request_id = None
-    for lbl in request_msg.get("labels", []):
-        if isinstance(lbl, (list, tuple)) and len(lbl) > 3 and isinstance(lbl[3], dict):
-            request_id = lbl[3].get("request_id")
-            break
-    assert request_id is not None
+    request_id = request_msg["labels"][0][3]["request_id"]
 
-    # Trigger the MESSAGE handler with an RPC_RESPONSE
-    response_data = {
-        "type": MessageType.RPC_RESPONSE.value,
-        "content": "Echo: hello",
-        "labels": [["bot-echo-svc", "service:echo-response", "1.0.0", {"request_id": request_id}]],
-    }
-    fake.trigger(EventName.MESSAGE, response_data)
+    # Resolve the future via the fake's helper
+    fake.resolve_rpc(request_id, "Echo: hello")
 
     result = await task
     assert result == "Echo: hello"
@@ -101,29 +89,15 @@ async def test_call_rpc_ignores_unrelated_responses(make_bot):
     task = asyncio.create_task(do_call())
     await asyncio.sleep(0.05)
 
-    # Send a response with a DIFFERENT request_id — should be ignored
-    unrelated_response = {
-        "type": MessageType.RPC_RESPONSE.value,
-        "content": "not for you",
-        "labels": [["bot-echo-svc", "service:echo-response", "1.0.0", {"request_id": "wrong-id"}]],
-    }
-    fake.trigger(EventName.MESSAGE, unrelated_response)
-
-    # Now send the correct response
     emits = fake.emits_for(EventName.MESSAGE)
-    request_msg = emits[0]
-    request_id = None
-    for lbl in request_msg.get("labels", []):
-        if isinstance(lbl, (list, tuple)) and len(lbl) > 3 and isinstance(lbl[3], dict):
-            request_id = lbl[3].get("request_id")
-            break
+    request_id = emits[0]["labels"][0][3]["request_id"]
 
-    correct_response = {
-        "type": MessageType.RPC_RESPONSE.value,
-        "content": "correct answer",
-        "labels": [["bot-echo-svc", "service:echo-response", "1.0.0", {"request_id": request_id}]],
-    }
-    fake.trigger(EventName.MESSAGE, correct_response)
+    # Resolve a DIFFERENT request_id — should be ignored
+    fake.resolve_rpc("wrong-id", "not for you")
+    assert not task.done()
+
+    # Now resolve the correct one
+    fake.resolve_rpc(request_id, "correct answer")
 
     result = await task
     assert result == "correct answer"
@@ -135,11 +109,8 @@ async def test_call_rpc_fires_callback_too(make_bot):
     bot, fake = make_bot(_CallerBot)
     bot.authenticated = True
 
-    # Register a callback via on_rpc_response decorator
     callback_data: list[dict] = []
 
-    # We need the request_id before we can register the callback.
-    # Start call_rpc, get the request_id from the emit, then register.
     async def do_call():
         return await bot.call_rpc("service:echo", "hello", timeout=5.0)
 
@@ -147,23 +118,19 @@ async def test_call_rpc_fires_callback_too(make_bot):
     await asyncio.sleep(0.05)
 
     emits = fake.emits_for(EventName.MESSAGE)
-    request_msg = emits[0]
-    request_id = None
-    for lbl in request_msg.get("labels", []):
-        if isinstance(lbl, (list, tuple)) and len(lbl) > 3 and isinstance(lbl[3], dict):
-            request_id = lbl[3].get("request_id")
-            break
+    request_id = emits[0]["labels"][0][3]["request_id"]
 
     @bot.on_rpc_response(request_id)
     def _cb(data):
         callback_data.append(data)
 
-    response_data = {
+    # Trigger the MESSAGE handler (fires callback) AND resolve the future
+    fake.trigger(EventName.MESSAGE, {
         "type": MessageType.RPC_RESPONSE.value,
         "content": "Echo: hello",
         "labels": [["bot-echo-svc", "service:echo-response", "1.0.0", {"request_id": request_id}]],
-    }
-    fake.trigger(EventName.MESSAGE, response_data)
+    })
+    fake.resolve_rpc(request_id, "Echo: hello")
 
     result = await task
     assert result == "Echo: hello"
@@ -174,13 +141,13 @@ async def test_call_rpc_fires_callback_too(make_bot):
 @pytest.mark.asyncio
 async def test_call_rpc_cleans_up_on_timeout(make_bot):
     """After timeout, the pending future should be removed."""
-    bot, _fake = make_bot(_CallerBot)
+    bot, fake = make_bot(_CallerBot)
     bot.authenticated = True
 
     with pytest.raises(asyncio.TimeoutError):
         await bot.call_rpc("service:echo", "hello", timeout=0.1)
 
-    assert len(bot._pending_rpc_futures) == 0
+    assert len(fake._pending_rpc_futures) == 0
 
 
 @pytest.mark.asyncio
@@ -194,7 +161,6 @@ async def test_call_rpc_concurrent_requests_dont_block(make_bot):
     bot, fake = make_bot(_CallerBot)
     bot.authenticated = True
 
-    # Start two concurrent call_rpc calls
     async def slow_call():
         return await bot.call_rpc("service:math", "slow", timeout=10.0)
 
@@ -204,47 +170,23 @@ async def test_call_rpc_concurrent_requests_dont_block(make_bot):
     task_slow = asyncio.create_task(slow_call())
     task_fast = asyncio.create_task(fast_call())
 
-    await asyncio.sleep(0.05)  # let both tasks start
+    await asyncio.sleep(0.05)
 
-    # Both should have emitted RPC_REQUEST
     emits = fake.emits_for(EventName.MESSAGE)
     assert len(emits) == 2
 
-    # Extract request_ids — first emit is slow, second is fast
-    slow_req_id = None
-    fast_req_id = None
-    for i, msg in enumerate(emits):
-        for lbl in msg.get("labels", []):
-            if isinstance(lbl, (list, tuple)) and len(lbl) > 3 and isinstance(lbl[3], dict):
-                rid = lbl[3].get("request_id")
-                if rid:
-                    if i == 0:
-                        slow_req_id = rid
-                    else:
-                        fast_req_id = rid
-    assert slow_req_id is not None
-    assert fast_req_id is not None
+    slow_req_id = emits[0]["labels"][0][3]["request_id"]
+    fast_req_id = emits[1]["labels"][0][3]["request_id"]
 
-    # Respond to the FAST call first (simulating quick service)
-    fast_response = {
-        "type": MessageType.RPC_RESPONSE.value,
-        "content": "fast-result",
-        "labels": [["bot-math-svc", "service:math-response", "1.0.0", {"request_id": fast_req_id}]],
-    }
-    fake.trigger(EventName.MESSAGE, fast_response)
+    # Resolve the fast call first
+    fake.resolve_rpc(fast_req_id, "fast-result")
 
-    # Fast should resolve immediately, slow should still be pending
     fast_result = await task_fast
     assert fast_result == "fast-result"
     assert not task_slow.done()
 
-    # Now respond to the slow call (simulating 5s delay)
-    slow_response = {
-        "type": MessageType.RPC_RESPONSE.value,
-        "content": "slow-result",
-        "labels": [["bot-math-svc", "service:math-response", "1.0.0", {"request_id": slow_req_id}]],
-    }
-    fake.trigger(EventName.MESSAGE, slow_response)
+    # Then resolve the slow call
+    fake.resolve_rpc(slow_req_id, "slow-result")
 
     slow_result = await task_slow
     assert slow_result == "slow-result"
@@ -252,11 +194,7 @@ async def test_call_rpc_concurrent_requests_dont_block(make_bot):
 
 @pytest.mark.asyncio
 async def test_call_rpc_resolves_correctly_when_out_of_order(make_bot):
-    """Responses arriving out of order are correlated by request_id.
-
-    The second call's response arrives before the first — each must
-    resolve its own Future, not the other's.
-    """
+    """Responses arriving out of order are correlated by request_id."""
     bot, fake = make_bot(_CallerBot)
     bot.authenticated = True
 
@@ -271,35 +209,18 @@ async def test_call_rpc_resolves_correctly_when_out_of_order(make_bot):
     await asyncio.sleep(0.05)
 
     emits = fake.emits_for(EventName.MESSAGE)
-    req_id_a = None
-    req_id_b = None
-    for i, msg in enumerate(emits):
-        for lbl in msg.get("labels", []):
-            if isinstance(lbl, (list, tuple)) and len(lbl) > 3 and isinstance(lbl[3], dict):
-                rid = lbl[3].get("request_id")
-                if rid:
-                    if i == 0:
-                        req_id_a = rid
-                    else:
-                        req_id_b = rid
+    req_id_a = emits[0]["labels"][0][3]["request_id"]
+    req_id_b = emits[1]["labels"][0][3]["request_id"]
 
-    # Respond to B first (out of order)
-    fake.trigger(EventName.MESSAGE, {
-        "type": MessageType.RPC_RESPONSE.value,
-        "content": "result-b",
-        "labels": [["svc", "resp", "1.0.0", {"request_id": req_id_b}]],
-    })
+    # Resolve B first (out of order)
+    fake.resolve_rpc(req_id_b, "result-b")
 
     result_b = await task_b
     assert result_b == "result-b"
     assert not task_a.done()
 
-    # Then respond to A
-    fake.trigger(EventName.MESSAGE, {
-        "type": MessageType.RPC_RESPONSE.value,
-        "content": "result-a",
-        "labels": [["svc", "resp", "1.0.0", {"request_id": req_id_a}]],
-    })
+    # Then resolve A
+    fake.resolve_rpc(req_id_a, "result-a")
 
     result_a = await task_a
     assert result_a == "result-a"
