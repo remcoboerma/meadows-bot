@@ -322,7 +322,7 @@ if __name__ == "__main__":
             "and": [
                 {"==": [{"var": "origin"}, f"bot-{TodoBot.BOT_NAME}"]},
                 {"regex_match": [{"var": "label"}, "^todo-(add|edit)-response$"]},
-                {"semver_match": [">=1.0.0", {"var": "semver"}]},
+                {"semver_match": ["^1.0.0", {"var": "semver"}]},
             ]
         },
         scope="global",

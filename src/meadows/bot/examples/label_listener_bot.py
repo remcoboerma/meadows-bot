@@ -35,7 +35,7 @@ class LabelListenerBot(BaseBot):
 
     BUSINESS RULE (MEADOWS-labeling-intent §2.3): the predicate uses
     JSON Logic to match labels from ``bot-sentiment`` with
-    ``semver >=1.0.0``.  Only matching labels are delivered.
+    ``semver ^1.0.0`` (compatible with 1.x.x).  Only matching labels are delivered.
 
     Commands:
         @listener help    - Show available commands
@@ -116,7 +116,7 @@ if __name__ == "__main__":
     bot = LabelListenerBot()
 
     # BUSINESS RULE (§2.3): subscribe to bot-sentiment labels with
-    # semver >=1.0.0.  The JSON Logic predicate filters on the label
+    # semver ^1.0.0.  The JSON Logic predicate filters on the label
     # fields (origin, label, semver) — only matching labels arrive.
     bot.register_label_subscription(
         "sentiment_alerts",
@@ -124,7 +124,7 @@ if __name__ == "__main__":
             "and": [
                 {"regex_match": [{"var": "origin"}, "^bot-sentiment$"]},
                 {"regex_match": [{"var": "label"}, "^sentiment$"]},
-                {"semver_match": [">=1.0.0", {"var": "semver"}]},
+                {"semver_match": ["^1.0.0", {"var": "semver"}]},
             ]
         },
         scope="global",

@@ -134,7 +134,7 @@ class TestLabelListenerBotSubscription:
                 "and": [
                     {"regex_match": [{"var": "origin"}, "^bot-sentiment$"]},
                     {"regex_match": [{"var": "label"}, "^sentiment$"]},
-                    {"semver_match": [">=1.0.0", {"var": "semver"}]},
+                    {"semver_match": ["^1.0.0", {"var": "semver"}]},
                 ]
             },
             scope="global",
