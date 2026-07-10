@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import httpx
 import pytest
+
+pytest.importorskip("httpx")
+
+import httpx
 
 from meadows.bot.slo_bot import SLOBot
 

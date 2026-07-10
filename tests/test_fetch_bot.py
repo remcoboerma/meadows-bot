@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+pytest.importorskip("httpx")
+
 from meadows.bot.fetch_bot import FetchBot
 
 
