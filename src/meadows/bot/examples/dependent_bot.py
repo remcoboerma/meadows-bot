@@ -49,7 +49,12 @@ class DependentBot(BaseBot):
         """Call the math service and log the result."""
         self.call_count += 1
         try:
-            result = await self.call_rpc("service:math", f"add {self.call_count} 1", timeout=10.0)
+            result = await self.call_rpc(
+                "service:math",
+                f"add {self.call_count} 1",
+                origin="bot-math-svc",
+                timeout=10.0,
+            )
             self.log(f"RPC result #{self.call_count}: {result}")
         except asyncio.TimeoutError:
             self.log(f"RPC call #{self.call_count} timed out")
