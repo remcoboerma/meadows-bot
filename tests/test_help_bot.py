@@ -59,7 +59,7 @@ class TestHelpBotHandle:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_dispatch_emits_bot_response(self, make_bot):
+    async def test_dispatch_emits_message(self, make_bot):
         _bot, fake = make_bot(HelpBot)
         await fake.trigger("bot_authenticated", {"groups": ["general"]})
         await fake.trigger("bot_command", {
@@ -72,7 +72,7 @@ class TestHelpBotHandle:
             },
             "thread_context": [],
         })
-        emits = fake.emits_for("bot_response")
+        emits = [e for e in fake.emits_for("message") if e.get("type") == "bot"]
         assert len(emits) >= 1
         assert "Welcome to the Chat" in emits[0]["content"]
 

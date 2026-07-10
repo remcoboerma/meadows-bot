@@ -332,11 +332,11 @@ class BaseBot(ABC):
     # ------------------------------------------------------------------
 
     async def on_bot_command(self, data: dict[str, Any]) -> None:
-        """Receive a bot_command, route it through should_handle/handle, emit bot_response.
+        """Receive a bot_command, route it through should_handle/handle, emit message.
 
         BUSINESS RULE (MEADOWS §5 line 130): this is the routing the
         bot author never writes. should_handle decides, handle responds,
-        and this method emits the bot_response via the protocol
+        and this method emits the message via the protocol
         envelope — no hand-built dicts (monolith base.py:231-243 is the
         behavior reference; the structure is replaced by Message).
 
@@ -364,7 +364,7 @@ class BaseBot(ABC):
         response = self.handle(command, args, raw_args, message, thread_context)
         if response is None:
             # BUSINESS RULE: handle() returning None means "I chose not
-            # to respond." Don't emit an empty bot_response.
+            # to respond." Don't emit an empty message.
             return
 
         # BUSINESS RULE (MEADOWS §7 line 152 + monolith base.py:219-243):
@@ -398,7 +398,7 @@ class BaseBot(ABC):
             timestamp=now_iso(),
         )
 
-        await self.client.emit(EventName.BOT_RESPONSE, bot_response.model_dump(exclude_none=True))
+        await self.client.emit(EventName.MESSAGE, bot_response.model_dump(exclude_none=True))
 
     # ------------------------------------------------------------------
     # Abstract surface — the bot author implements these
@@ -433,7 +433,7 @@ class BaseBot(ABC):
         """Process the command and return a response (or None to stay silent).
 
         BUSINESS RULE (MEADOWS §5 line 130): this is the second thing a
-        bot author writes. Returning a string emits a bot_response;
+        bot author writes. Returning a string emits a message;
         returning None means "I chose not to respond."
 
         Args:

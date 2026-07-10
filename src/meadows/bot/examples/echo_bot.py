@@ -60,7 +60,7 @@ class EchoBot(BaseBot):
         """Process EchoBot commands.
 
         BUSINESS RULE (MEADOWS §5 line 130): handle is the second thing
-        an author writes. Returning a string emits a bot_response;
+        an author writes. Returning a string emits a message;
         returning None stays silent.
         """
         if command == "echo":

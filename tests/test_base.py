@@ -157,16 +157,16 @@ class TestOnBotCommand:
         await bot.on_bot_command(self._make_command_data())
         assert bot.handle_calls == [("greet", ["world"])]
 
-    async def test_when_should_handle_true_and_handle_returns_response_bot_response_emitted(self, make_bot):
+    async def test_when_should_handle_true_and_handle_returns_response_message_emitted(self, make_bot):
         """BUSINESS RULE (MEADOWS §2 line 41 + §7 line 152): the
-        response is emitted as a protocol Message (bot_response event),
-        not a hand-built dict. quoted_message carries the triggering
-        user message for reply context.
+        response is emitted as a protocol Message (message event with
+        bot auth), not a hand-built dict. quoted_message carries the
+        triggering user message for reply context.
         """
         bot, fake = make_bot(_RecorderBot)
         await bot.on_bot_command(self._make_command_data())
 
-        responses = fake.emits_for(EventName.BOT_RESPONSE)
+        responses = [e for e in fake.emits_for(EventName.MESSAGE) if e.get("type") == "bot"]
         assert len(responses) == 1
         data = responses[0]
         # BUSINESS RULE: the response is a Message envelope.
@@ -186,16 +186,16 @@ class TestOnBotCommand:
         bot, fake = make_bot(_RecorderBot)
         bot._should_return = False
         await bot.on_bot_command(self._make_command_data())
-        assert fake.emits_for(EventName.BOT_RESPONSE) == []
+        assert [e for e in fake.emits_for(EventName.MESSAGE) if e.get("type") == "bot"] == []
 
     async def test_when_handle_returns_none_no_emit(self, make_bot):
         """BUSINESS RULE: handle() returning None means "I chose not to
-        respond." No bot_response is emitted.
+        respond." No message is emitted.
         """
         bot, fake = make_bot(_RecorderBot)
         bot._handle_return = None
         await bot.on_bot_command(self._make_command_data())
-        assert fake.emits_for(EventName.BOT_RESPONSE) == []
+        assert [e for e in fake.emits_for(EventName.MESSAGE) if e.get("type") == "bot"] == []
 
     async def test_original_command_included_in_response(self, make_bot):
         """BUSINESS RULE (monolith base.py:234): the original_command
@@ -204,7 +204,7 @@ class TestOnBotCommand:
         """
         bot, fake = make_bot(_RecorderBot)
         await bot.on_bot_command(self._make_command_data())
-        data = fake.emits_for(EventName.BOT_RESPONSE)[0]
+        data = next(e for e in fake.emits_for(EventName.MESSAGE) if e.get("type") == "bot")
         assert data["original_command"] == "@recorder greet world"
 
 

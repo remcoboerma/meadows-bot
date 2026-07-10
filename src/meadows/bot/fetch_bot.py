@@ -149,7 +149,7 @@ class FetchBot(BaseBot):
             quoted_message=quoted_msg,
             timestamp=now_iso(),
         )
-        self._fire_and_forget(EventName.BOT_RESPONSE, response.model_dump(exclude_none=True))
+        self._fire_and_forget(EventName.MESSAGE, response.model_dump(exclude_none=True))
 
     async def _fetch_all(self, urls: list[str], max_chars: int | None) -> list:
         async with httpx.AsyncClient(

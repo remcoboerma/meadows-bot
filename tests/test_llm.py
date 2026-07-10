@@ -103,7 +103,7 @@ class TestLLMBotHandle:
 
     def test_handle_returns_llm_output(self, make_bot):
         """BUSINESS RULE: handle() returns whatever query_llm() returns,
-        so the LLM's output becomes the bot_response content.
+        so the LLM's output becomes the message content.
         """
         bot, _ = make_bot(_StubLLMBot)
         result = bot.handle("ask", ["x"], [], self._message(), [])

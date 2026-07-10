@@ -137,7 +137,7 @@ class TestRagBotHandle:
             },
             "thread_context": [],
         })
-        emits = fake.emits_for("bot_response")
+        emits = [e for e in fake.emits_for("message") if e.get("type") == "bot"]
         assert len(emits) >= 1
         assert "Full Documents" in emits[0]["content"]
 

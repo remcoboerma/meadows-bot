@@ -132,13 +132,13 @@ class TestEchoBotRouting:
             "thread_context": [],
         }
 
-    async def test_on_bot_command_emits_bot_response_for_echo(self, make_bot):
+    async def test_on_bot_command_emits_message_for_echo(self, make_bot):
         """BUSINESS RULE (MEADOWS §2 line 41): the response goes out as
-        a protocol Message (bot_response event), not a hand-built dict.
+        a protocol Message (message event with bot auth), not a hand-built dict.
         """
         bot, fake = _make_echo(make_bot)
         await bot.on_bot_command(self._command_data("echo", ["hello"]))
-        responses = fake.emits_for(EventName.BOT_RESPONSE)
+        responses = [e for e in fake.emits_for(EventName.MESSAGE) if e.get("type") == "bot"]
         assert len(responses) == 1
         data = responses[0]
         assert data["type"] == MessageType.BOT
@@ -147,7 +147,7 @@ class TestEchoBotRouting:
         assert data["group_id"] == "general"
 
     async def test_on_bot_command_no_emit_for_unknown_command(self, make_bot):
-        """BUSINESS RULE: an unknown command produces no bot_response."""
+        """BUSINESS RULE: an unknown command produces no message."""
         bot, fake = _make_echo(make_bot)
         await bot.on_bot_command(self._command_data("unknown", []))
-        assert fake.emits_for(EventName.BOT_RESPONSE) == []
+        assert [e for e in fake.emits_for(EventName.MESSAGE) if e.get("type") == "bot"] == []
