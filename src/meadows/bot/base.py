@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -711,6 +712,66 @@ class BaseBot(ABC):
             "applied_by": applied_by or f"bot-{self.BOT_NAME}",
         }
         self._fire_and_forget(EventName.LABEL_ASSIGNED, label_data)
+
+    def send_form(
+        self,
+        content: str,
+        answer_label: tuple[str, str, str],
+        form_html: str | None = None,
+        group_id: str = "general",
+    ) -> None:
+        """Send an interactive form message to the chat.
+
+        BUSINESS RULE (MEADOWS-forms-intent §2.3): the form content is
+        human-readable; the form HTML is in metadata. The TUI can show
+        the content; the web UI renders the form.
+
+        BUSINESS RULE (MEADOWS-forms-intent §2.1): forms are messages
+        with labels. The interactive-form label signals "this message
+        contains an interactive element." The answer_label is the label
+        the response will carry for routing.
+
+        BUSINESS RULE (MEADOWS-forms-intent §2.6): the answer_label is
+        a full triplet [origin, label, semver] — not just a name. This
+        lets third-party bots subscribe on label patterns without
+        knowing the form maker.
+
+        Args:
+            content: Human-readable description (e.g. "Dagelijkse check-in").
+            answer_label: (origin, label, semver) triplet for routing responses.
+            form_html: Optional HTML form content. Goes in metadata.
+            group_id: Target group. Defaults to "general".
+        """
+        msg_id = generate_message_id()
+
+        # Auto-wrap bare HTML in <form> tags if no <form> present.
+        # BUSINESS RULE: <button type="submit"> only works inside a <form>.
+        # Bots (written by non-developers, AI-generated) forget this.
+        # The old monolith's base.py:363 did the same auto-wrap.
+        if form_html and not re.search(r"<form\b", form_html):
+            form_html = f'<form id="{msg_id}">\n{form_html}\n</form>'
+
+        meadows_meta: dict[str, Any] = {
+            "answer_label": list(answer_label),
+        }
+        if form_html:
+            meadows_meta["form"] = form_html
+
+        msg = Message(
+            id=msg_id,
+            type=MessageType.BOT,
+            user_id=self.claims.sub,
+            bot_name=self.BOT_NAME,
+            group_id=group_id,
+            content=content,
+            labels=[
+                Label("meadows", "interactive-form", "1.0.0"),
+                Label(answer_label[0], answer_label[1], answer_label[2]),
+            ],
+            metadata={"meadows": {"form_handling": meadows_meta}},
+            timestamp=now_iso(),
+        )
+        self._fire_and_forget(EventName.MESSAGE, msg.model_dump(exclude_none=True))
 
     def emit_rpc_request(
         self,

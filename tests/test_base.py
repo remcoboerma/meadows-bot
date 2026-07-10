@@ -537,3 +537,93 @@ class TestLabelSubscriptions:
         bot, _ = make_bot(_RecorderBot)
         bot.register_label_subscription("s1", None)
         assert bot._registered_label_subscriptions[0]["predicate"] == {}
+
+
+# ---------------------------------------------------------------------------
+# send_form (MEADOWS-forms-intent §2.1, §2.3, §2.6)
+# ---------------------------------------------------------------------------
+
+
+class TestSendForm:
+    def test_send_form_emits_message_with_interactive_form_label(self, make_bot):
+        """BUSINESS RULE (§2.3): the form message carries the interactive-form label."""
+        bot, fake = make_bot(_RecorderBot)
+        bot.send_form(
+            content="Hoe was je dag?",
+            answer_label=("bot-recorder", "checkin-resp", "1.0.0"),
+            form_html="<form><input name='mood'></form>",
+        )
+
+        emits = fake.emits_for(EventName.MESSAGE)
+        assert len(emits) == 1
+        data = emits[0]
+        assert data["type"] == "bot"
+        assert data["content"] == "Hoe was je dag?"
+
+        # Must have interactive-form label AND answer_label
+        labels = data["labels"]
+        assert len(labels) == 2
+        # Label NamedTuple serializes with metadata=None as trailing element
+        assert labels[0][:3] == ("meadows", "interactive-form", "1.0.0")
+        assert labels[1][:3] == ("bot-recorder", "checkin-resp", "1.0.0")
+
+    def test_send_form_places_answer_label_in_metadata(self, make_bot):
+        """BUSINESS RULE (§2.6): answer_label in metadata['meadows']['form_handling']."""
+        bot, fake = make_bot(_RecorderBot)
+        bot.send_form(
+            content="check-in",
+            answer_label=("bot-recorder", "resp", "1.0.0"),
+        )
+
+        data = fake.emits_for(EventName.MESSAGE)[0]
+        fh = data["metadata"]["meadows"]["form_handling"]
+        assert fh["answer_label"] == ["bot-recorder", "resp", "1.0.0"]
+
+    def test_send_form_places_form_html_in_metadata(self, make_bot):
+        """BUSINESS RULE (§2.3): form HTML is in metadata, not content."""
+        bot, fake = make_bot(_RecorderBot)
+        bot.send_form(
+            content="fill this out",
+            answer_label=("a", "b", "1.0.0"),
+            form_html="<form id='f1'><input name='x'></form>",
+        )
+
+        data = fake.emits_for(EventName.MESSAGE)[0]
+        fh = data["metadata"]["meadows"]["form_handling"]
+        assert fh["form"] == "<form id='f1'><input name='x'></form>"
+
+    def test_send_form_without_html_omits_form_key(self, make_bot):
+        """No form_html → no 'form' key in form_handling metadata."""
+        bot, fake = make_bot(_RecorderBot)
+        bot.send_form(
+            content="just a description",
+            answer_label=("a", "b", "1.0.0"),
+        )
+
+        data = fake.emits_for(EventName.MESSAGE)[0]
+        fh = data["metadata"]["meadows"]["form_handling"]
+        assert "form" not in fh
+        assert fh["answer_label"] == ["a", "b", "1.0.0"]
+
+    def test_send_form_uses_group_id(self, make_bot):
+        """group_id is passed through to the message."""
+        bot, fake = make_bot(_RecorderBot)
+        bot.send_form(
+            content="form",
+            answer_label=("a", "b", "1.0.0"),
+            group_id="team-a",
+        )
+
+        data = fake.emits_for(EventName.MESSAGE)[0]
+        assert data["group_id"] == "team-a"
+
+    def test_send_form_message_type_is_bot(self, make_bot):
+        """BUSINESS RULE (§2.1): form is a BOT message, not FORM_SUBMISSION."""
+        bot, fake = make_bot(_RecorderBot)
+        bot.send_form(
+            content="form",
+            answer_label=("a", "b", "1.0.0"),
+        )
+
+        data = fake.emits_for(EventName.MESSAGE)[0]
+        assert data["type"] == MessageType.BOT.value
