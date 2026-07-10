@@ -281,6 +281,10 @@ class StatsBot(BaseBot):
 
 if __name__ == "__main__":
     bot = StatsBot()
-    bot.register_pattern("all_msgs", ".*", scope="global")
+    # BUSINESS RULE (MEADOWS-labeling-intent §2.3): empty predicate
+    # matches everything — the label-subscription equivalent of ".*".
+    # deliver="message_only" ensures stats_bot receives the full MESSAGE
+    # event, not just LABEL_ASSIGNED.
+    bot.register_label_subscription("all_msgs", {}, scope="global", deliver="message_only")
     bot.register_pattern("escalation", "urgent|critical|emergency", scope="global")
     bot.connect()

@@ -142,6 +142,12 @@ class BaseBot(ABC):
         self._registered_patterns: list[dict[str, Any]] = []
         self._pattern_matched_handlers: dict[str, Callable] = {}
 
+        # Label subscription surface (MEADOWS-labeling-intent §2.4).
+        # Subscriptions are stored here for replay on reconnect — same
+        # pattern as patterns.
+        self._registered_label_subscriptions: list[dict[str, Any]] = []
+        self._label_assigned_handlers: dict[str, Callable] = {}
+
         # Fetch-messages callbacks (request_id -> callback).
         self._pending_fetch_requests: dict[str, Callable] = {}
 
@@ -170,6 +176,7 @@ class BaseBot(ABC):
         self.client.on(EventName.BOT_AUTHENTICATED, self.on_bot_authenticated)
         self.client.on(EventName.PATTERN_MATCHED, self._on_pattern_matched_event)
         self.client.on(EventName.FETCH_MESSAGES_RESULT, self._on_fetch_messages_result)
+        self.client.on(EventName.LABEL_ASSIGNED, self._on_label_assigned_event)
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -308,6 +315,13 @@ class BaseBot(ABC):
         for pattern_data in self._registered_patterns:
             await self.client.emit(EventName.REGISTER_PATTERN, pattern_data)
             self.log(f"Re-registered pattern '{pattern_data['name']}' after reconnect")
+
+        # BUSINESS RULE (MEADOWS-labeling-intent §2.4): replay label
+        # subscriptions after reconnect.  Same pattern as patterns —
+        # the server's subscription registry is per-session.
+        for sub_data in self._registered_label_subscriptions:
+            await self.client.emit(EventName.REGISTER_LABEL_SUBSCRIPTION, sub_data)
+            self.log(f"Re-registered label subscription '{sub_data['name']}' after reconnect")
 
     # ------------------------------------------------------------------
     # Command routing
@@ -578,6 +592,121 @@ class BaseBot(ABC):
             # don't crash. A bot that dies on one bad pattern match
             # teaches a docent nothing.
             self.log(f"Error in pattern_matched handler for '{pattern_name}': {e}", "ERROR")
+
+    # ------------------------------------------------------------------
+    # Label subscriptions (MEADOWS-labeling-intent §2.4)
+    # ------------------------------------------------------------------
+
+    def register_label_subscription(
+        self,
+        name: str,
+        predicate: dict[str, Any] | None = None,
+        scope: str = "room",
+        group_id: str | None = None,
+        deliver: str = "label_only",
+    ) -> None:
+        """Register a label subscription with the server.
+
+        BUSINESS RULE (MEADOWS-labeling-intent §2.4): subscriptions live
+        in meadows-client (and are delegated to from here).  Both bots
+        and GUI/TUI clients need this.  The bot SDK provides a thin
+        wrapper for the sync author surface.
+
+        BUSINESS RULE (§2.3): an empty predicate (None or {}) matches
+        everything — this is how a bot that wants all messages (like
+        stats_bot) subscribes.
+
+        Args:
+            name: Subscription name (used for dispatch and replay).
+            predicate: JSON Logic predicate dict. None or {} = match all.
+            scope: "room" (per-group) or "global".
+            group_id: Required when scope="room".
+            deliver: "label_only" (default), "message_only", or "both".
+        """
+        data: dict[str, Any] = {
+            "name": name,
+            "predicate": predicate or {},
+            "scope": scope,
+            "deliver": deliver,
+        }
+        if group_id:
+            data["group_id"] = group_id
+
+        self._registered_label_subscriptions.append(data)
+        if self.authenticated:
+            self._fire_and_forget(EventName.REGISTER_LABEL_SUBSCRIPTION, data)
+            self.log(f"Registered label subscription '{name}' scope={scope}")
+        else:
+            self.log(f"Queued label subscription '{name}' for registration after connect")
+
+    def unregister_label_subscription(self, name: str) -> None:
+        """Unregister a previously registered label subscription.
+
+        BUSINESS RULE (MEADOWS-labeling-intent §2.4): inverse of
+        register.  Fire-and-forget emit (same pattern as patterns).
+        """
+        self._fire_and_forget(EventName.UNREGISTER_LABEL_SUBSCRIPTION, {"name": name})
+        self._registered_label_subscriptions = [
+            s for s in self._registered_label_subscriptions if s["name"] != name
+        ]
+        self.log(f"Unregistered label subscription '{name}'")
+
+    def on_label_assigned(self, subscription_name: str) -> Callable:
+        """Decorator: register callback for label_assigned events.
+
+        BUSINESS RULE (MEADOWS-labeling-intent §2.4): ``on_label_assigned()``
+        lives in meadows-client; this is a thin wrapper for the bot SDK's
+        decorator pattern.
+
+        The callback receives the full label_assigned event dict:
+            {"labels": [...], "target_msg_id": "...", "applied_by": "..."}
+        """
+
+        def decorator(func: Callable) -> Callable:
+            self._label_assigned_handlers[subscription_name] = func
+            return func
+
+        return decorator
+
+    def _on_label_assigned_event(self, data: dict[str, Any]) -> None:
+        """Internal: dispatch label_assigned to registered handler.
+
+        BUSINESS RULE (MEADOWS-labeling-intent §2.5): errors in handlers
+        are logged, not raised — same pattern as pattern_matched.
+        """
+        sub_name = data.get("subscription_name")
+        handler = self._label_assigned_handlers.get(sub_name) if sub_name else None
+        if handler is None:
+            return
+        try:
+            handler(data)
+        except Exception as e:
+            self.log(f"Error in label_assigned handler for '{sub_name}': {e}", "ERROR")
+
+    def emit_label(
+        self,
+        target_msg_id: str,
+        labels: list[tuple[Any, ...]],
+        applied_by: str | None = None,
+    ) -> None:
+        """Emit a LABEL_ASSIGNED event — produce labels on a message.
+
+        BUSINESS RULE (MEADOWS-labeling-intent §2.5): bots can produce
+        labels server-side.  The server deduplicates and cascades to
+        subscribers.
+
+        Args:
+            target_msg_id: The message to attach labels to.
+            labels: List of Label tuples. Each can be 3-element
+                (origin, label, semver) or 4-element with metadata.
+            applied_by: Who produced these labels. Defaults to bot name.
+        """
+        label_data = {
+            "labels": [list(lbl) for lbl in labels],
+            "target_msg_id": target_msg_id,
+            "applied_by": applied_by or f"bot-{self.BOT_NAME}",
+        }
+        self._fire_and_forget(EventName.LABEL_ASSIGNED, label_data)
 
     # ------------------------------------------------------------------
     # Message history (fetch)

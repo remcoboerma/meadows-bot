@@ -1035,6 +1035,7 @@ provides-extras = ["dependency-heavy", "dev", "examples", "llm"]
 name = "meadows-client"
 source = { editable = "../meadows-client" }
 dependencies = [
+    { name = "aiohttp" },
     { name = "meadows-protocol" },
     { name = "pyjwt" },
     { name = "python-socketio" },
@@ -1042,6 +1043,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "hatch", marker = "extra == 'dev'" },
     { name = "meadows-protocol", editable = "../meadows-protocol" },
     { name = "pyjwt", specifier = ">=2.12.0" },

@@ -448,3 +448,92 @@ class TestFetchMessages:
         bot._on_fetch_messages_result({"request_id": request_id, "messages": []})
         out = capfd.readouterr().out
         assert "Error in fetch_messages callback" in out
+
+
+# ---------------------------------------------------------------------------
+# Label subscriptions (MEADOWS-labeling-intent §2.4)
+# ---------------------------------------------------------------------------
+
+
+class TestLabelSubscriptions:
+    def test_register_label_subscription_queues_before_auth(self, make_bot):
+        """BUSINESS RULE (§2.4): subscriptions queued before auth,
+        replayed on connect — same pattern as patterns.
+        """
+        bot, _ = make_bot(_RecorderBot)
+        bot.register_label_subscription("sentiment", {"regex_match": [{"var": "label"}, "^sentiment$"]})
+        assert len(bot._registered_label_subscriptions) == 1
+        assert bot._registered_label_subscriptions[0]["name"] == "sentiment"
+
+    def test_register_label_subscription_emits_after_auth(self, make_bot):
+        """Already authenticated -> emit immediately."""
+        bot, fake = make_bot(_RecorderBot)
+        bot.authenticated = True
+        bot.register_label_subscription("s1", {}, scope="global")
+        emits = fake.emits_for(EventName.REGISTER_LABEL_SUBSCRIPTION)
+        assert len(emits) == 1
+        assert emits[0]["name"] == "s1"
+
+    def test_unregister_label_subscription_removes_and_emits(self, make_bot):
+        bot, fake = make_bot(_RecorderBot)
+        bot.register_label_subscription("s1", {})
+        bot.unregister_label_subscription("s1")
+        assert bot._registered_label_subscriptions == []
+        emits = fake.emits_for(EventName.UNREGISTER_LABEL_SUBSCRIPTION)
+        assert len(emits) == 1
+        assert emits[0]["name"] == "s1"
+
+    def test_on_label_assigned_decorator_registers_handler(self, make_bot):
+        bot, _ = make_bot(_RecorderBot)
+        received: list[dict] = []
+
+        @bot.on_label_assigned("sentiment")
+        def _handle(data):
+            received.append(data)
+
+        bot._on_label_assigned_event({"subscription_name": "sentiment", "labels": []})
+        assert len(received) == 1
+
+    def test_label_assigned_no_match_ignored(self, make_bot):
+        """No matching handler -> silent, no error."""
+        bot, _ = make_bot(_RecorderBot)
+        bot._on_label_assigned_event({"subscription_name": "unknown", "labels": []})
+
+    def test_label_assigned_handler_error_is_logged(self, make_bot, capfd):
+        """BUSINESS RULE (§5 line 132): errors logged, not raised."""
+        bot, _ = make_bot(_RecorderBot)
+
+        @bot.on_label_assigned("bad")
+        def _handle(_data):
+            raise RuntimeError("boom")
+
+        bot._on_label_assigned_event({"subscription_name": "bad", "labels": []})
+        out = capfd.readouterr().out
+        assert "Error in label_assigned handler" in out
+
+    def test_emit_label_emits_label_assigned(self, make_bot):
+        bot, fake = make_bot(_RecorderBot)
+        bot.emit_label("msg-1", [("bot-sentiment", "sentiment", "1.0.0", {"score": 0.9})])
+        emits = fake.emits_for(EventName.LABEL_ASSIGNED)
+        assert len(emits) == 1
+        data = emits[0]
+        assert data["target_msg_id"] == "msg-1"
+        assert data["labels"] == [["bot-sentiment", "sentiment", "1.0.0", {"score": 0.9}]]
+        assert data["applied_by"] == "bot-recorder"
+
+    async def test_label_subscriptions_replayed_on_reconnect(self, make_bot):
+        """BUSINESS RULE (§2.4): subscriptions replayed after reconnect."""
+        bot, fake = make_bot(_RecorderBot)
+        bot.register_label_subscription("s1", {"test": True})
+        assert fake.emits_for(EventName.REGISTER_LABEL_SUBSCRIPTION) == []
+
+        await bot.on_bot_authenticated({"groups": []})
+        sub_emits = fake.emits_for(EventName.REGISTER_LABEL_SUBSCRIPTION)
+        assert len(sub_emits) == 1
+        assert sub_emits[0]["name"] == "s1"
+
+    def test_empty_predicate_normalizes_to_empty_dict(self, make_bot):
+        """BUSINESS RULE (§2.3): None predicate = {} = match all."""
+        bot, _ = make_bot(_RecorderBot)
+        bot.register_label_subscription("s1", None)
+        assert bot._registered_label_subscriptions[0]["predicate"] == {}
