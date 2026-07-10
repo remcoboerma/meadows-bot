@@ -32,7 +32,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable, ClassVar
 
 from meadows.client import MeadowClient
-from meadows.protocol import EventName, JWTRole, Message, MessageType, build_claims
+from meadows.protocol import EventName, JWTRole, Label, Message, MessageType, build_claims
 from meadows.protocol.envelope import QuotedMessage, generate_message_id, now_iso
 
 # BUSINESS RULE (MEADOWS §5 line 132): "Foutmeldingen en defaults zijn
@@ -147,6 +147,9 @@ class BaseBot(ABC):
         # pattern as patterns.
         self._registered_label_subscriptions: list[dict[str, Any]] = []
         self._label_assigned_handlers: dict[str, Callable] = {}
+
+        # RPC response handlers (request_id -> callback).
+        self._rpc_response_handlers: dict[str, Callable] = {}
 
         # Fetch-messages callbacks (request_id -> callback).
         self._pending_fetch_requests: dict[str, Callable] = {}
@@ -707,6 +710,87 @@ class BaseBot(ABC):
             "applied_by": applied_by or f"bot-{self.BOT_NAME}",
         }
         self._fire_and_forget(EventName.LABEL_ASSIGNED, label_data)
+
+    def emit_rpc_request(
+        self,
+        service_label: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+        *,
+        origin: str | None = None,
+        semver: str = "1.0.0",
+    ) -> str:
+        """Send an RPC_REQUEST message to a service bot.
+
+        BUSINESS RULE (MEADOWS-labeling-intent §2.10): RPC messages are
+        ordinary MESSAGE events with type=RPC_REQUEST.  They reach
+        service bots via label routing, not room broadcast.
+
+        Args:
+            service_label: The service label to route to (e.g. "service:echo").
+            content: The request payload.
+            metadata: Optional metadata (request_id is auto-generated).
+            origin: Label origin. Defaults to bot name.
+            semver: Label semver. Defaults to "1.0.0".
+
+        Returns:
+            The request_id for correlation with the response.
+        """
+        request_id = uuid.uuid4().hex[:12]
+        meta = {"request_id": request_id, **(metadata or {})}
+        msg = Message(
+            id=generate_message_id(),
+            type=MessageType.RPC_REQUEST,
+            user_id=self.claims.sub,
+            bot_name=self.BOT_NAME,
+            group_id="general",
+            content=content,
+            labels=[Label(origin or f"bot-{self.BOT_NAME}", service_label, semver, meta)],
+        )
+        self._fire_and_forget(EventName.MESSAGE, msg.model_dump(exclude_none=True))
+        return request_id
+
+    def emit_rpc_response(
+        self,
+        request_id: str,
+        content: str,
+        *,
+        origin: str | None = None,
+        service_label: str = "service:response",
+        semver: str = "1.0.0",
+        group_id: str = "general",
+    ) -> None:
+        """Send an RPC_RESPONSE back to the caller.
+
+        BUSINESS RULE (§2.10): the response carries the same request_id
+        as the request so the caller can correlate.  The response is
+        persisted to the same group as the request so the JSONL history
+        is complete.
+        """
+        meta = {"request_id": request_id}
+        msg = Message(
+            id=generate_message_id(),
+            type=MessageType.RPC_RESPONSE,
+            user_id=self.claims.sub,
+            bot_name=self.BOT_NAME,
+            group_id=group_id,
+            content=content,
+            labels=[Label(origin or f"bot-{self.BOT_NAME}", service_label, semver, meta)],
+        )
+        self._fire_and_forget(EventName.MESSAGE, msg.model_dump(exclude_none=True))
+
+    def on_rpc_response(self, request_id: str) -> Callable:
+        """Decorator: register callback for an RPC_RESPONSE matching a request_id.
+
+        BUSINESS RULE (§2.10): correlation uses request_id in label metadata.
+        The caller subscribes to RPC_RESPONSE labels and matches on request_id.
+        """
+
+        def decorator(func: Callable) -> Callable:
+            self._rpc_response_handlers[request_id] = func
+            return func
+
+        return decorator
 
     # ------------------------------------------------------------------
     # Message history (fetch)
