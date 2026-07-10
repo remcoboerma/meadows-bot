@@ -627,3 +627,36 @@ class TestSendForm:
 
         data = fake.emits_for(EventName.MESSAGE)[0]
         assert data["type"] == MessageType.BOT.value
+
+    def test_send_form_auto_wraps_bare_html_in_form_tag(self, make_bot):
+        """BUSINESS RULE: bare HTML without <form> is auto-wrapped by the SDK.
+
+        The old monolith's base.py:363 did the same. Bots (written by
+        non-developers, AI-generated) forget <form>. <button type="submit">
+        only works inside a <form>.
+        """
+        bot, fake = make_bot(_RecorderBot)
+        bot.send_form(
+            content="add todo",
+            answer_label=("bot-test", "resp", "1.0.0"),
+            form_html="<label>Name: <input name='name'></label><button type='submit'>OK</button>",
+        )
+
+        data = fake.emits_for(EventName.MESSAGE)[0]
+        fh = data["metadata"]["meadows"]["form_handling"]
+        assert fh["form"].startswith("<form id=")
+        assert "<label>Name:" in fh["form"]
+        assert "</form>" in fh["form"]
+
+    def test_send_form_does_not_double_wrap_existing_form(self, make_bot):
+        """If the bot already includes <form>, the SDK does not wrap again."""
+        bot, fake = make_bot(_RecorderBot)
+        bot.send_form(
+            content="form",
+            answer_label=("a", "b", "1.0.0"),
+            form_html="<form id='myform'><input name='x'></form>",
+        )
+
+        data = fake.emits_for(EventName.MESSAGE)[0]
+        fh = data["metadata"]["meadows"]["form_handling"]
+        assert fh["form"] == "<form id='myform'><input name='x'></form>"
