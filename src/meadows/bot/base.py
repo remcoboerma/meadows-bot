@@ -25,6 +25,7 @@ never shared with the bot — a compromised bot cannot mint arbitrary tokens.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 import uuid
@@ -151,6 +152,9 @@ class BaseBot(ABC):
         # RPC response handlers (request_id -> callback).
         self._rpc_response_handlers: dict[str, Callable] = {}
 
+        # Async RPC futures: request_id -> Future for call_rpc().
+        self._pending_rpc_futures: dict[str, asyncio.Future[str]] = {}
+
         # Fetch-messages callbacks (request_id -> callback).
         self._pending_fetch_requests: dict[str, Callable] = {}
 
@@ -180,6 +184,8 @@ class BaseBot(ABC):
         self.client.on(EventName.PATTERN_MATCHED, self._on_pattern_matched_event)
         self.client.on(EventName.FETCH_MESSAGES_RESULT, self._on_fetch_messages_result)
         self.client.on(EventName.LABEL_ASSIGNED, self._on_label_assigned_event)
+        # Async RPC: resolve futures when RPC_RESPONSE arrives.
+        self.client.on(EventName.MESSAGE, self._on_rpc_response_message)
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -791,6 +797,89 @@ class BaseBot(ABC):
             return func
 
         return decorator
+
+    def _on_rpc_response_message(self, data: dict[str, Any]) -> None:
+        """Internal handler: resolve futures and dispatch callbacks on RPC_RESPONSE.
+
+        BUSINESS RULE (§2.10): this runs on every MESSAGE event.  It checks
+        whether the message is an RPC_RESPONSE, extracts the request_id from
+        label metadata, and resolves the matching Future (for call_rpc) or
+        invokes the registered callback (for on_rpc_response).
+        """
+        if data.get("type") != MessageType.RPC_RESPONSE.value:
+            return
+
+        labels = data.get("labels", [])
+        request_id = None
+        for lbl in labels:
+            if isinstance(lbl, (list, tuple)) and len(lbl) > 3 and isinstance(lbl[3], dict):
+                request_id = lbl[3].get("request_id")
+                if request_id:
+                    break
+
+        if not request_id:
+            return
+
+        content = data.get("content", "")
+
+        # Resolve async future from call_rpc().
+        fut = self._pending_rpc_futures.pop(request_id, None)
+        if fut and not fut.done():
+            fut.set_result(content)
+
+        # Fire callback from on_rpc_response() decorator.
+        handler = self._rpc_response_handlers.pop(request_id, None)
+        if handler:
+            handler(data)
+
+    async def call_rpc(
+        self,
+        service_label: str,
+        content: str,
+        *,
+        origin: str | None = None,
+        semver: str = "1.0.0",
+        timeout: float = 30.0,
+    ) -> str:
+        """Send an RPC request and await the response.
+
+        BUSINESS RULE (§2.10): this is the async author surface for
+        bot-to-bot RPC.  It sends an RPC_REQUEST, registers a label
+        subscription for the response, and blocks until the service
+        bot replies or the timeout expires.
+
+        Must be called from an async context (e.g. inside an async
+        message handler or a background task).
+
+        Args:
+            service_label: The service label to route to (e.g. "service:math").
+            content: The request payload.
+            origin: Label origin for the request. Defaults to bot name.
+            semver: Label semver. Defaults to "1.0.0".
+            timeout: Seconds to wait for a response. Default 30.
+
+        Returns:
+            The response content string.
+
+        Raises:
+            asyncio.TimeoutError: if no response arrives within *timeout*.
+        """
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+
+        request_id = self.emit_rpc_request(
+            service_label,
+            content,
+            origin=origin,
+            semver=semver,
+        )
+        self._pending_rpc_futures[request_id] = future
+
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        except asyncio.TimeoutError:
+            self._pending_rpc_futures.pop(request_id, None)
+            raise
 
     # ------------------------------------------------------------------
     # Message history (fetch)
