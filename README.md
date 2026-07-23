@@ -46,7 +46,7 @@ if __name__ == "__main__":
 ## Install
 
 ```bash
-# Minimal (BaseBot + LLMBot)
+cd meadows-bot
 uv pip install -e .
 
 # With extra bots that need HTTP dependencies
@@ -61,6 +61,8 @@ uv run pytest -q
 
 ## Included bots
 
+### Production bots (lazy-loaded via `from meadows.bot import HelpBot`)
+
 | Bot | Commands | Deps | Description |
 |-----|----------|------|-------------|
 | `HelpBot` | `help`, `bots`, `commands`, `groups`, `guide` | none | Static help text |
@@ -71,7 +73,17 @@ uv run pytest -q
 | `RagBot` | `rag`, `zoek` | none | Video/audio fragment search via RAG API |
 | `SLOBot` | `slo`, `leerdoel` | none | Dutch SLO curriculum learning outcome search |
 
-All bots are lazy-loaded: `from meadows.bot import HelpBot`.
+### Example bots (in `examples/` directory)
+
+| Bot | Description |
+|-----|-------------|
+| `EchoBot` | Canonical example bot — echoes messages back |
+| `SentimentBot` | Label producer: sentiment analysis on all messages |
+| `LabelListenerBot` | Label consumer: alerts on angry sentiment |
+| `EchoServiceBot` | Minimal RPC service (echo) |
+| `MathServiceBot` | RPC service (arithmetic) |
+| `RPCCallerBot` | Demonstrates RPC via labels |
+| `TodoBot` | CRUD demo using interactive forms |
 
 ## The protocol boundary
 
@@ -89,6 +101,9 @@ This package imports from `meadows.client` (transport) and `meadows.protocol` (s
 | Start | `connect()` — waits 3s for the server, then connects and blocks |
 | Helpers | `log()`, `get_sender_info()`, `format_help_response()`, `extract_quoted_string()` |
 | Patterns | `register_pattern()`, `unregister_pattern()`, `on_pattern_matched()` (decorator) |
+| Labels | `register_label_subscription()`, `unregister_label_subscription()`, `on_label_assigned()`, `emit_label()` |
+| Forms | `send_form()` — send interactive HTML forms, receive submissions via label subscriptions |
+| RPC | `call_rpc()`, `emit_rpc_request()`, `emit_rpc_response()`, `on_rpc_response()` |
 | History | `fetch_messages()` |
 | Lifecycle hooks | `on_connect()`, `on_disconnect()` (passthrough to client) |
 
