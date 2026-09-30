@@ -7,7 +7,12 @@ networks:
 
 services:
   meadows-bot:
-    build: .
+    # Context is the repo root: pyproject.toml's [tool.uv.sources] points at
+    # ../meadows-protocol and ../meadows-client, so the siblings must be part
+    # of the build context (see Dockerfile).
+    build:
+      context: ..
+      dockerfile: meadows-bot/Dockerfile
     image: meadows-bot:latest
     restart: unless-stopped
     environment:
